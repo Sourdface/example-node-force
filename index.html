@@ -1,0 +1,835 @@
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Node-Forces Example</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      
+      html {
+        background-color: #222;
+      }
+
+      html, body {
+        font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif
+      }
+      
+      html,
+      body,
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+      
+      .default {
+        stroke-width: 3;
+        stroke: #AAA;
+        fill: #90F;
+      }
+      
+      .arrowhead {
+        stroke-width: 0;
+        fill: #000;
+      }
+      
+      .connection {
+        stroke-width: 1.5;
+      }
+      
+      .node {
+        cursor: pointer;
+      }
+      
+      .node:hover {
+        fill: #A3F;
+      }
+      
+      .node.active {
+        stroke: #FF0;
+      }
+      
+      .node.active.drag {
+        stroke: #FFF;
+      }
+      
+      .drag, .drag * {
+        cursor: none;
+        pointer-events: none;
+      }
+
+      .help {
+        position: absolute;
+        right: 12pt;
+        top: 12pt;
+        opacity: 0.8;
+        font-size: 10pt;
+      }
+
+      .help.active {
+        background-color: #666666;
+        color: #FFF;
+        border-radius: 4pt;
+        padding: 12pt;
+        max-height: calc(100% - 24pt);
+        overflow: auto;
+      }
+
+      .help .toggle {
+        cursor: pointer;
+        pointer-events: all;
+        position: absolute;
+        top: 8pt;
+        right: 8pt;
+        width: 18pt;
+        height: 18pt;
+        border-radius: 9pt;
+        text-align: center;
+        line-height: 18pt;
+        opacity: 0.5;
+        background-color: #FFF;
+        color: #000;
+        font-size: 14pt;
+        text-shadow: none;
+      }
+
+      .help .toggle::before {
+        content: "?";
+      }
+      
+      .help.active .toggle {
+        border: 1px solid #FFF;
+        color: #FFF;
+        background-color: transparent;
+      }
+
+      .help.active .toggle::before {
+        content: "X";
+      }
+
+      .help:not(.active) .content {
+        display: none;
+      }
+
+      .help .content,
+      .help .content table {
+        color: inherit;
+        font-size: inherit;
+      }
+
+      .help .content h1 {
+        text-align: center;
+        font-size: 120%;
+      }
+
+      th, td {
+        padding: 2pt;
+        padding-bottom: 8pt;
+      }
+
+      th {
+        text-align: right;
+      }
+    </style>
+    <script>
+      // @ts-check
+      'use strict';
+      
+      const SVG_NS = "http://www.w3.org/2000/svg";
+
+      const LATENCY = .8;
+      const EFFICIENCY = .99;
+      
+      window.onload = () => {
+        document.body.oncontextmenu = e => {
+          e.preventDefault();
+        }
+
+        document.querySelector('.help .toggle').addEventListener("mousedown", e => {
+          document.querySelector('.help').classList.toggle('active');
+        });
+        
+        let graph = new Graph();
+        
+        // @ts-ignore
+        graph.redraw(document.getElementById('mainSvgCanvas'));
+      };
+      
+      /**
+       * Superclass of anything that is involved with showing a graph.
+       * 
+       * This includes nodes, connections, and the graph itself.
+       */
+      class GraphChild {
+        /**
+        * @param {SVGElement} svgElement 
+        * @param {Graph} graph
+        */
+        constructor(svgElement, graph) {
+          /**
+          * @protected
+          */
+          this._element = svgElement;
+          this.element.classList.add('default');
+          this.id = GraphChild._nextId++;
+          this.graph = graph;
+          this.x = 0;
+          this.y = 0;
+          this.signal = 0;
+        }
+        
+        /**
+         * The SVG element that represents this object.
+         */
+        get element() {
+          return this._element;
+        }
+        
+        /**
+         * Update the SVG element of the GraphChild.
+         * 
+         * This applies a translation relative to 0,0 so that the element
+         * appears at its internal x,y coordinate, and also ensures that the
+         * GraphChild's element is a child of the given parent element.
+         * 
+         * @param {SVGElement} parentElement The element that should parent
+         *                                   the current GraphChild's element.
+         */
+        redraw(parentElement) {
+          this.element.setAttribute("transform", `translate(${this.x} ${this.y})`);
+          const sCol = (this.signal * 255)|0;
+          const { style } = this.element;
+          style.stroke = `rgb(${sCol}, ${sCol}, ${sCol})`;
+          style.strokeWidth = `${3 + this.signal * 6}`;
+          if (this.element.parentNode === parentElement) {
+            return;
+          }
+          if (this.element.parentNode) {
+            this.element.parentNode.removeChild(this.element);
+          }
+          parentElement.appendChild(this.element);
+        }
+
+        update() {
+
+        }
+
+        /**
+         * @param {number} strength
+         */
+        sendSignal(strength) {
+          this.signal += strength;
+        }
+      }
+      GraphChild._nextId = 0;
+      
+      /**
+       * A node in the graph.
+       * 
+       * Contains most of the user interaction logic, except for the parts that
+       * don't involve any existing nodes, such as that which involves
+       * interacting with empty space.
+       */
+      class GraphNode extends GraphChild {
+        /**
+        * @param {Graph} graph 
+        * @param {number} x
+        * @param {number} y
+        */
+        constructor(graph, x, y) {
+          super(document.createElementNS(SVG_NS, "circle"), graph);
+          this.element.setAttribute("r", "20");
+          this.element.classList.add('node');
+          this.element.addEventListener("mousedown", this.handleMouseDown());
+          this.x = x;
+          this.y = y;
+          /** @private */
+          this._mouseStartX = 0;
+          /** @private */
+          this._mouseStartY = 0;
+          /**
+          * @type {(e: MouseEvent) => void}
+          * @private
+          */
+          this._mouseMoveHandler = null;
+          /**
+          * @type {(e: MouseEvent) => void}
+          * @private
+          */
+          this._mouseUpHandler = null;
+          this.active = false;
+          this.drag = false;
+        }
+        
+        /**
+         * Marks this node as the active node, deactivating all other nodes.
+         */
+        activate() {
+          this.graph.nodes.forEach(node => {
+            if (node === this) {
+              return;
+            }
+            node.deactivate();
+          });
+          this.active = true;
+        }
+        
+        /**
+         * De-marks the node as active.
+         */
+        deactivate() {
+          if (this.active) {
+            this.active = false;
+            console.log('Deactivated ' + this.id);
+          }
+        }
+        
+        /**
+         * Produces the handler that handles what happens when the user clicks
+         * down on a node.
+         */
+        handleMouseDown() {
+          return (/** @type {MouseEvent} */ e) => {
+            console.log('Clicked ' + this.id);
+            e.stopPropagation();
+            if (e.button == 0) {
+              if (e.altKey) {
+                if (this.active) {
+                  return;
+                }
+                const { activeNode } = this.graph;
+                if (!activeNode) {
+                  return;
+                }
+                if (e.shiftKey) {
+                  if (this.graph.getConnection(this, activeNode)) {
+                    this.graph.disconnect(this, activeNode);
+                  } else {
+                    this.graph.connect(this, activeNode);
+                  }
+                } else {
+                  if (this.graph.getConnection(activeNode, this)) {
+                    this.graph.disconnect(activeNode, this);
+                  } else {
+                    this.graph.connect(activeNode, this);
+                  }
+                }
+              } else {
+                this.mouseStartXOffset = e.clientX - this.x;
+                this.mouseStartYOffset = e.clientY - this.y;
+                this.activate();
+                this.drag = true;
+                this._mouseMoveHandler = this.handleMouseMove();
+                window.addEventListener("mousemove", this._mouseMoveHandler);
+                this._mouseUpHandler = this.handleMouseUp();
+                window.addEventListener("mouseup", this._mouseUpHandler);
+              }
+            } else if (e.button == 1) {
+              this.graph.deleteNode(this);
+            } else if (e.button == 2) {
+              this.sendSignal(10);
+            }
+          };
+        }
+        
+        /**
+         * Produces the handler that handles what should happen when the mouse
+         * moves after the mouse has been clicked.
+         */
+        handleMouseMove() {
+          return (/** @type {MouseEvent} */ e) => {
+            if (!this.drag) {
+              this.endDrag();
+              return
+            }
+            this.x = e.clientX - this.mouseStartXOffset;
+            this.y = e.clientY - this.mouseStartYOffset;
+          }
+        }
+        
+        /**
+         * Produces the handler that handles what should happen when mouse
+         * button is released after having been clicked.
+         */
+        handleMouseUp() {
+          return (/** @type {MouseEvent} */ e) => {
+            this.endDrag();
+          };
+        }
+        
+        /**
+         * Performs all state change necessary when its time to stop dragging.
+         */
+        endDrag() {
+          this.drag = false;
+          if (this._mouseUpHandler) {
+            window.removeEventListener("mouseup", this._mouseUpHandler);
+            this._mouseUpHandler = null;
+          }
+          if (this._mouseMoveHandler) {
+            window.removeEventListener("mousemove", this._mouseMoveHandler);
+            this._mouseMoveHandler = null;
+          }
+        }
+        
+        update() {
+          const newSignal = this.signal * LATENCY;
+          const conns = this.graph.getConnectionsOut(this);
+          conns.forEach(conn => {
+            conn.sendSignal((this.signal - newSignal) / conns.length);
+          })
+          this.signal = newSignal;
+        }
+
+        /**
+         * @param {SVGElement} parentElement 
+         */
+        redraw(parentElement) {
+          if (
+            this.graph.nodes.indexOf(this) === -1
+            && this.element.parentNode
+          ) {
+            this.element.parentNode.removeChild(this.element);
+            return;
+          }
+          super.redraw(parentElement);
+          if (this.active) {
+            this.element.classList.add('active');
+            this.element.style.stroke = '#FFFF00';
+          } else {
+            this.element.classList.remove('active');
+          }
+          if (this.drag) {
+            this.element.classList.add('drag');
+            document.body.classList.add('drag');
+          } else {
+            this.element.classList.remove('drag');
+            document.body.classList.remove('drag');
+          }
+        }
+      }
+      
+      /**
+      * Connects two nodes unidirectionally.
+      * 
+      * Connections are direct property of the graph rather than nodes.
+      * 
+      * Note that a bidirectional connection is really just two unidirectional
+      * connections, where the direction of one is the opposite of the other.
+      */
+      class GraphConnection extends GraphChild {
+        /**
+        * Connects rwo graph nodes.
+        * 
+        * @param {Graph} graph
+        * @param {GraphNode} nodeOut
+        * @param {GraphNode} nodeIn
+        */
+        constructor (graph, nodeOut, nodeIn) {
+          super(document.createElementNS(SVG_NS, "line"), graph);
+          this.element.setAttribute("marker-end", "url(#arrowhead)");
+          this.element.classList.add('connection');
+          
+          /**
+          * The node on the "out" side of the connection
+          * @type {GraphNode}
+          */
+          this.nodeOut = nodeOut;
+          
+          /**
+          * The node on the "in" side of the connection
+          * @type {GraphNode} 
+          */
+          this.nodeIn = nodeIn;
+        }
+        
+        update() {
+          const newSignal = this.signal * LATENCY;
+          this.nodeIn.sendSignal((this.signal - newSignal) * EFFICIENCY);
+          this.signal = newSignal;
+        }
+
+        /**
+        * @param {SVGElement} parentElement
+        */
+        redraw(parentElement) {
+          super.redraw(parentElement);
+          const sa = this.element.setAttribute.bind(this.element);
+          sa('x1', `${this.nodeOut.x}`);
+          sa('y1', `${this.nodeOut.y}`);
+          sa('x2', `${this.nodeIn.x}`);
+          sa('y2', `${this.nodeIn.y}`);
+        }
+      }
+      
+      /**
+       * @typedef {Object} GraphNodeDescriptor
+       * @property {GraphConnection[]} connectionsIn
+       * @property {GraphConnection[]} connectionsOut
+       */
+      
+      /**
+       * @typedef {Object} NodeDescriptorMap = WeakMap<GraphNode, NodeDescriptor>
+       */
+      
+      /**
+       * Represents the graph as a whole.
+       * 
+       * Owns all the nodes and all the connections between them.
+       * 
+       * Also handles interactions with empty space.
+       */
+      class Graph extends GraphChild {
+        constructor() {
+          super(document.createElementNS(SVG_NS, "g"), null);
+          /**
+           * SVG element where connections are drawn.
+           */
+          this.elementConnectionLayer = document.createElementNS(SVG_NS, "g");
+          /**
+           * SVG element where nodes are drawn.
+           */
+          this.elementNodeLayer = document.createElementNS(SVG_NS, "g");
+          /**
+           * Internal list of all nodes.
+           * 
+           * @private
+           * @type {GraphNode[]}
+           */
+          this._nodes = [];
+          /**
+           * Holds information about nodes that the nodes don't know about.
+           * 
+           * @private
+           * @type {WeakMap.<GraphNode, GraphNodeDescriptor>}
+           */
+          this._nodeDescriptors = new WeakMap();
+          /**
+           * The handler that handles what happens when empty space is clicked.
+           */
+          this._mouseDownEmptySpaceHandler = this.handleMouseDownEmptySpace();
+          document.body.addEventListener("mousedown", this._mouseDownEmptySpaceHandler);
+
+          const cycle = () => {
+            this.update();
+            this.redraw();
+            requestAnimationFrame(cycle);
+          };
+          cycle();
+        }
+        
+        /**
+         * Produces the handler for when empty space is clicked.
+         */
+        handleMouseDownEmptySpace() {
+          return (/** @type {MouseEvent} */ e) => {
+            const { activeNode } = this;
+            if (e.button == 1) {
+              const node = this.createNode(e.clientX, e.clientY, activeNode);
+              if (!e.shiftKey) {
+                node.activate();
+              }
+            } else if (activeNode) {
+              activeNode.deactivate();
+            }
+          };
+        }
+        
+        /**
+         * Exposes the internal list of nodes.
+         * @todo Probably don't need to abstract it; this could be a direct prop
+         */
+        get nodes() {
+          return this._nodes;
+        }
+        
+        /**
+         * Create new node at specified coordinate and connect to graph
+         * 
+         * @param {number} x
+         * @param {number} y
+         * @param {GraphNode?} nodeOut Optional outgoing node to connect to
+         */
+        createNode(x, y, nodeOut = null) {
+          const node = new GraphNode(this, x, y);
+          this._nodes.push(node);
+          this._nodeDescriptors.set(node, {
+            connectionsIn: [],
+            connectionsOut: []
+          });
+          if (nodeOut) {
+            this.connect(nodeOut, node);
+          }
+          return node;
+        }
+        
+        /**
+         * Delete a node and remove it from the graph
+         * 
+         * @param {GraphNode} node 
+         */
+        deleteNode(node) {
+          const i = this.nodes.indexOf(node);
+          this.nodes.splice(i, 1);
+          this.getConnectionsOut(node).slice().forEach(conn => {
+            this.disconnect(conn.nodeOut, conn.nodeIn);
+          });
+          this.getConnectionsIn(node).slice().forEach(conn => {
+            this.disconnect(conn.nodeOut, conn.nodeIn);
+          });
+          if (node.element.parentElement) {
+            node.element.parentElement.removeChild(node.element);
+          }
+        }
+        
+        /**
+         * Connect an outgoing node to an incoming node
+         * 
+         * This does NOT prevent duplicate connctions between nodes. Calling
+         * code is responsible for preventing this if it is a problem.
+         * 
+         * @param {GraphNode} nodeOut 
+         * @param {GraphNode} nodeIn
+         * @return {GraphConnection}
+         */
+        connect(nodeOut, nodeIn) {
+          const conn = new GraphConnection(this, nodeOut, nodeIn);
+          const { _nodeDescriptors: nodeDescs } = this;
+          const { connectionsOut } = nodeDescs.get(nodeIn);
+          if (connectionsOut.indexOf(conn) === -1) {
+            connectionsOut.push(conn);
+          }
+          const { connectionsIn } = nodeDescs.get(nodeOut);
+          if (connectionsIn.indexOf(conn) === -1) {
+            connectionsIn.push(conn);
+          }
+          
+          console.log(`Connected ${nodeOut.id} -> ${nodeIn.id}`);
+          return conn;
+        }
+        
+        /**
+         * Disconnect an outgoing node from an incoming node.
+         * 
+         * This does NOT check to see if the nodes are already connected. An
+         * error may occur if you attempt to disconnect nodes that are not
+         * connected.
+         * 
+         * @param {GraphNode} nodeOut 
+         * @param {GraphNode} nodeIn
+         */
+        disconnect(nodeOut, nodeIn) {
+          const { _nodeDescriptors: nodeDescs } = this;
+          
+          const { connectionsOut: connsO } = nodeDescs.get(nodeIn);
+          const connO = connsO.find(conn => conn.nodeOut === nodeOut);
+          connsO.splice(connsO.indexOf(connO), 1);
+          if (connO.element.parentElement) {
+            connO.element.parentElement.removeChild(connO.element);
+          }
+          
+          const { connectionsIn: connsI } = nodeDescs.get(nodeOut);
+          const connI = connsI.find(conn => conn.nodeIn === nodeIn)
+          connsI.splice(connsI.indexOf(connI), 1);
+          if (connI.element.parentElement) {
+            connI.element.parentElement.removeChild(connI.element);
+          }
+          console.log(`Disconnected ${nodeOut.id} -> ${nodeIn.id}`);
+        }
+        
+        /**
+         * Returns the connection object that connects two nodes.
+         * 
+         * Order of nodes is important. It's possible for two nodes to have
+         * two connections and have those connection directions be different,
+         * in which case the connection you get will depend on the order of
+         * the nodes.
+         * 
+         * @param {GraphNode} nodeOut 
+         * @param {GraphNode} nodeIn
+         */
+        getConnection(nodeOut, nodeIn) {
+          return this._nodeDescriptors.get(nodeIn).connectionsOut
+          .find(conn => conn.nodeOut === nodeOut);
+        }
+        
+        /**
+         * The node that is currently marked as active.
+         */
+        get activeNode() {
+          return this._nodes.find(({ active }) => active);
+        }
+        
+        /**
+         * Returns all incoming connections to a node.
+         * 
+         * @param {GraphNode} node
+         * @return {GraphConnection[]}
+         */
+        getConnectionsOut(node) {
+          return this._nodeDescriptors.get(node).connectionsIn;
+        }
+        
+        /**
+         * Returns all outgoing connections to a node.
+         * 
+         * @param {GraphNode} node
+         * @return {GraphConnection[]}
+         */
+        getConnectionsIn(node) {
+          return this._nodeDescriptors.get(node).connectionsOut;
+        }
+
+        update() {
+          const forces = this.nodes.map(node => {
+            const pulls = this.getConnectionsOut(node).map(conn => {
+              conn.update();
+              return [
+                (conn.nodeIn.x-node.x) * .01 * (conn.nodeIn.signal + node.signal),
+                (conn.nodeIn.y-node.y) * .01 * (conn.nodeIn.signal + node.signal)
+              ];
+            });
+            const pushes = this.nodes.map(node2 => {
+              if (node === node2) {
+                return [0,0];
+              }
+              const [dx, dy] = [(node2.x - node.x), (node2.y - node.y)];
+              const mag = Math.sqrt((dx * dx) + (dy * dy));
+              const [nx, ny] = [dx / mag, dy / mag];
+              const spd = -1 / mag * 60 * (node2.signal + node.signal + 0.1);
+              return [nx * spd , ny * spd];
+            });
+            const centerPush = [
+              (window.innerWidth / 2 - node.x ) * 0.001,
+              (window.innerHeight / 2 - node.y ) * 0.001
+            ]
+            return [...pushes, ...pulls, centerPush];
+          });
+          this.nodes.forEach((node, i) => {
+            if (node.drag) {
+              return;
+            }
+            forces[i].forEach(([dx, dy]) => {
+              node.x += dx;
+              node.y += dy;
+            });
+            node.update();
+          });
+        }
+        
+        /**
+         * @param {SVGElement} parentElement
+         */
+        redraw(parentElement = null) {
+          if (parentElement === null) {
+            // @ts-ignore
+            parentElement = this.element.parentElement;
+          }
+          super.redraw(parentElement);
+          const {
+            elementConnectionLayer: connLayer,
+            elementNodeLayer: nodeLayer
+          } = this;
+          if (connLayer.parentNode !== parentElement) {
+            if (connLayer.parentNode) {
+              connLayer.parentNode.removeChild(connLayer);
+            }
+            parentElement.appendChild(connLayer);
+          }
+          if (nodeLayer.parentNode !== parentElement) {
+            if (nodeLayer.parentNode) {
+              nodeLayer.parentNode.removeChild(nodeLayer);
+            }
+            parentElement.appendChild(nodeLayer);
+          }
+          this._nodes.forEach(node => {
+            node.redraw(nodeLayer);
+            this.getConnectionsIn(node).forEach(conn => {
+              conn.redraw(connLayer);
+            })
+          })
+        }
+      }
+      </script>
+  </head>
+  <body>
+    <svg id="mainSvgCanvas">
+      <defs>
+        <marker id="arrowhead"
+          markerWidth="15"
+          markerHeight="16"
+          refX="30"
+          refY="8"
+          orient="auto"
+          markerUnits="userSpaceOnUse"
+        >
+          <polygon class="default arrowhead" points="0,0, 10,8, 0,16" />
+        </marker>
+      </defs>
+    </svg>
+    <div class="help">
+      <div class="toggle"></div>
+      <div class="content">
+        <h1>Controls</h1>
+        <table>
+          <tr>
+            <th>Middle-Click Empty Space</th>
+            <td>
+              Create a new node with incoming connection from selected node,
+              then select the new node
+            </td>
+          </tr>
+          <tr>
+            <th>Shift-Middle-Click Empty Space</th>
+            <td>
+              Create a new node with incoming connection from selected node,
+              but keep the old node selected
+            </td>
+          </tr>
+          <tr>
+            <th>Click Empty Space</th>
+            <td>Deactivate current node</td>
+          </tr>
+          <tr>
+            <th>Click Node</th>
+            <td>Activate the node</td>
+          </tr>
+          <tr>
+            <th>Drag Node</th>
+            <td>Move the node</td>
+          </tr>
+          <tr>
+            <th>Middle-Click Node</th>
+            <td>Delete the node, severing all connections to and from it</td>
+          </tr>
+          <tr>
+            <th>Alt-Click Node</th>
+            <td>
+              Toggle incoming connection to the clicked node from the
+              active node
+            </td>
+          </tr>
+          <tr>
+            <th>Shift-Alt-Click Node</th>
+            <td>
+              Toggle outgoing connection from the clicked node to the
+              active node
+            </td>
+          </tr>
+          <tr>
+            <th>Right-Click Node</th>
+            <td>Send signal</td>
+          </tr>
+        </table>
+        <p>
+          Note that a bidirectional connection between two nodes can be
+          created by toggling on each direction individually.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
