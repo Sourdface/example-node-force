@@ -685,29 +685,46 @@
         }
 
         update() {
+          const { innerWidth: ww, innerHeight: wh } = window;
           const forces = this.nodes.map(node => {
+            const { x: x1, y: y1, signal: s1 } = node;
+            
             const pulls = this.getConnectionsOut(node).map(conn => {
               conn.update();
-              return [
-                (conn.nodeIn.x-node.x) * .01 * (conn.nodeIn.signal + node.signal),
-                (conn.nodeIn.y-node.y) * .01 * (conn.nodeIn.signal + node.signal)
+              const node2 = conn.nodeIn;
+              const [x2, y2, s2] = [
+                node2.x,
+                node2.y,
+                node2.signal
               ];
+              const [dx, dy] = [(x2 - x1), (y2 - y1)];
+              const q1 = .01 * (s1 + s2);
+              return [dx * q1, dy * q1];
             });
+            
             const pushes = this.nodes.map(node2 => {
               if (node === node2) {
                 return [0,0];
               }
-              const [dx, dy] = [(node2.x - node.x), (node2.y - node.y)];
-              const mag = Math.sqrt((dx * dx) + (dy * dy));
-              const [nx, ny] = [dx / mag, dy / mag];
-              const spd = -1 / mag * 60 * (node2.signal + node.signal + 0.1);
-              return [nx * spd , ny * spd];
+              const [x2, y2, s2] = [
+                node2.x,
+                node2.y,
+                node2.signal
+             ];
+              const q2 = -60 * (s1 + s2 + 0.1);
+              const [dx, dy] = [(x2 - x1), (y2 - y1)];
+              const m = Math.sqrt((dx * dx) + (dy * dy));
+              const [nx, ny] = [dx / m, dy / m];
+              const s = 1 / m * q2;
+              return [nx * s , ny * s];
             });
-            const centerPush = [
-              (window.innerWidth / 2 - node.x ) * 0.001,
-              (window.innerHeight / 2 - node.y ) * 0.001
-            ]
-            return [...pushes, ...pulls, centerPush];
+            
+            const q3 = 0.001;
+            const [x2, y2] = [ww / 2, wh / 2];
+            const [dx, dy] = [(x2 - x1), (y2 - y1)];
+            const centerPull = [dx * q3, dy * q3]
+            
+            return [...pushes, ...pulls, centerPull];
           });
           this.nodes.forEach((node, i) => {
             if (node.drag) {
@@ -716,6 +733,18 @@
             forces[i].forEach(([dx, dy]) => {
               node.x += dx;
               node.y += dy;
+              if (node.x < 0) {
+                node.x = 0;
+              }
+              if (node.y < 0) {
+                node.y = 0;
+              }
+              if (node.x > ww) {
+                node.x = ww;
+              }
+              if (node.y > wh) {
+                node.y = wh;
+              }
             });
             node.update();
           });
