@@ -126,6 +126,13 @@
         font-size: 120%;
       }
 
+      .help .content p {
+        max-width: 90ex;
+        margin-left: auto;
+        margin-right: auto;
+        padding: 2ex;
+      }
+
       th, td {
         padding: 2pt;
         padding-bottom: 8pt;
@@ -133,6 +140,50 @@
 
       th {
         text-align: right;
+      }
+
+      .controls {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        padding-bottom: 16pt;
+      }
+
+      .controls button {
+        width: 40pt;
+        height: 40pt;
+        border-radius: 20pt;
+        text-align: center;
+        background-color: rgba(255,255,255,0.8);
+        border: 0;
+        padding: 8pt;
+        margin: 0 16pt;
+        margin-top: 0;
+        margin-bottom: 0;
+        float: left;
+      }
+
+      .controls button.active {
+        background-color: yellow;
+      }
+
+      .controls button * {
+        height: 100%;
+        line-height: 24pt;
+        width: auto;
+        display: inline-block;
+        font-size: 18pt;
+        font-weight: bold;
+        margin: 0;
+        padding: 0;
+      }
+
+      .controls button:focus {
+        outline: 0;
+      }
+
+      .control-icon {
+        fill: black;
       }
     </style>
     <script>
@@ -296,44 +347,66 @@
           return (/** @type {MouseEvent} */ e) => {
             console.log('Clicked ' + this.id);
             e.stopPropagation();
-            if (e.button == 0) {
+            if (e.button === 0) {
               if (e.altKey) {
-                if (this.active) {
-                  return;
-                }
-                const { activeNode } = this.graph;
-                if (!activeNode) {
+                if (this.active || !this.graph.activeNode) {
                   return;
                 }
                 if (e.shiftKey) {
-                  if (this.graph.getConnection(this, activeNode)) {
-                    this.graph.disconnect(this, activeNode);
-                  } else {
-                    this.graph.connect(this, activeNode);
-                  }
+                  this.modeConnectInverse();
                 } else {
-                  if (this.graph.getConnection(activeNode, this)) {
-                    this.graph.disconnect(activeNode, this);
-                  } else {
-                    this.graph.connect(activeNode, this);
-                  }
+                  this.modeConnect();
                 }
               } else {
-                this.mouseStartXOffset = e.clientX - this.x;
-                this.mouseStartYOffset = e.clientY - this.y;
-                this.activate();
-                this.drag = true;
-                this._mouseMoveHandler = this.handleMouseMove();
-                window.addEventListener("mousemove", this._mouseMoveHandler);
-                this._mouseUpHandler = this.handleMouseUp();
-                window.addEventListener("mouseup", this._mouseUpHandler);
+                this[this.graph.mode](e);
               }
             } else if (e.button == 1) {
-              this.graph.deleteNode(this);
+              this.modeNodeToggle();
             } else if (e.button == 2) {
-              this.sendSignal(10);
+              this.modeSignal();
             }
           };
+        }
+
+        modeSelect(/** @type {MouseEvent} */ e) {
+          this.mouseStartXOffset = e.clientX - this.x;
+          this.mouseStartYOffset = e.clientY - this.y;
+          this.activate();
+          this.drag = true;
+          this._mouseMoveHandler = this.handleMouseMove();
+          window.addEventListener("mousemove", this._mouseMoveHandler);
+          this._mouseUpHandler = this.handleMouseUp();
+          window.addEventListener("mouseup", this._mouseUpHandler);
+        }
+        
+        modeNodeToggle() {
+          this.graph.deleteNode(this);
+        }
+
+        modeNodeToggleAlt() {
+          this.graph.deleteNode(this);
+        }
+
+        modeConnect() {
+          const { activeNode } = this.graph;
+          if (this.graph.getConnection(activeNode, this)) {
+            this.graph.disconnect(activeNode, this);
+          } else {
+            this.graph.connect(activeNode, this);
+          }
+        }
+
+        modeConnectInverse() {
+          const { activeNode } = this.graph;
+          if (this.graph.getConnection(this, activeNode)) {
+            this.graph.disconnect(this, activeNode);
+          } else {
+            this.graph.connect(this, activeNode);
+          }
+        }
+
+        modeSignal() {
+          this.sendSignal(10);
         }
         
         /**
@@ -514,6 +587,31 @@
           this._mouseDownEmptySpaceHandler = this.handleMouseDownEmptySpace();
           document.body.addEventListener("mousedown", this._mouseDownEmptySpaceHandler);
 
+          /**
+           * Collection of all the mode buttons.
+           * @type {{ [key: string]: HTMLButtonElement }}
+           */
+          this.buttons = {
+            'modeSelect': document.getElementById('modeSelect'),
+            'modeNodeToggle': document.getElementById('modeNodeToggle'),
+            'modeNodeToggleAlt': document.getElementById('modeNodeToggleAlt'),
+            'modeConnect': document.getElementById('modeConnect'),
+            'modeConnectInverse': document.getElementById('modeConnectInverse'),
+            'modeSignal': document.getElementById('modeSignal'),
+          }
+
+          /**
+           * Current mode.
+           * @type {string}
+           */
+           this.mode = 'modeSelect';
+
+          for (let btnId in this.buttons) {
+            this.buttons[btnId]
+              .addEventListener("mousedown", this.handleClickModeButton());
+          }
+          this.refreshButtons();
+
           const cycle = () => {
             this.update();
             this.redraw();
@@ -521,16 +619,44 @@
           };
           cycle();
         }
+
+        /**
+         * Update the appearance of the buttons.
+         */
+        refreshButtons() {
+          for (let btnId in this.buttons) {
+            const btn = this.buttons[btnId];
+            if (btn.id === this.mode) {
+              btn.classList.add('active');
+            } else {
+              btn.classList.remove('active');
+            }
+          }
+        }
+
+        /**
+         * Produces a handler for what happens when any mode button is clicked.
+         */
+        handleClickModeButton() {
+          return (/** @type {MouseEvent} */ e) => {
+            e.stopImmediatePropagation();
+            // @ts-ignore
+            this.mode = e.currentTarget.id;
+            console.log(`Current mode: ${this.mode}`);
+            this.refreshButtons();
+          }
+        }
         
         /**
          * Produces the handler for when empty space is clicked.
          */
         handleMouseDownEmptySpace() {
           return (/** @type {MouseEvent} */ e) => {
+            e.stopImmediatePropagation();
             const { activeNode } = this;
-            if (e.button == 1) {
+            if (e.button == 1 || this.mode.startsWith('modeNodeToggle')) {
               const node = this.createNode(e.clientX, e.clientY, activeNode);
-              if (!e.shiftKey) {
+              if (!e.shiftKey && !this.mode.endsWith('Alt')) {
                 node.activate();
               }
             } else if (activeNode) {
@@ -804,6 +930,9 @@
       <div class="toggle"></div>
       <div class="content">
         <h1>Controls</h1>
+        <p>All controls are available as buttons at the bottom-left. However,
+        while the left-most button is selected, you can also use any of those
+        function via different mouse and key combos:</p>
         <table>
           <tr>
             <th>Middle-Click Empty Space</th>
@@ -859,6 +988,66 @@
           created by toggling on each direction individually.
         </p>
       </div>
+    </div>
+    <div class="controls">
+      <button id="modeSelect">
+        <svg
+          width="24.519518"
+          height="32"
+          viewBox="0 0 24.519516 31.999999"
+        >
+          <path class="control-icon"
+            d="m 2,0 -0.62337922,27.63632 8.10390643,-8.51945 8.3117013,12.88313 4.779228,-2.90915 -7.896117,-12.67531 11.2208,0.4151 z"
+          />
+        </svg>
+      </button>
+      <button id="modeNodeToggle">
+        <p>+/-</p>
+      </button>
+      <button id="modeNodeToggleAlt">
+        <p>-\+</p>
+      </button>
+      <button id="modeConnect">
+        <svg
+          width="24.511587"
+          height="25.706366"
+          viewBox="0 0 24.511585 25.706365"
+        >
+          <path class="control-icon"
+            d="m 0,3 6.27583532,6.67898 c -2.6072154,3.738 -2.2622064,8.78661 0.8292948,12.13518 l 2.0658732,-1.94118 c -2.5432443,-2.77213 -2.3850104,-7.07388 0.3550417,-9.65165 2.7429335,-2.57618 7.0476085,-2.46741 9.6569315,0.244 l 2.062117,-1.93765 c -3.138469,-3.27452 -8.126447,-3.93848 -12.0122055,-1.59897 l -6.2899576,-6.69401 z"
+          />
+          <path class="control-icon"
+            d="m 10.5,11 c -2.4065788,2.26131 -2.5511929,6.01664 -0.3229981,8.38737 1.6590191,1.76158 4.2427831,2.31416 6.5145131,1.39325 l 5.00541,5.32694 3.187079,-2.99471 -5.003639,-5.32506 c 1.059511,-2.21082 0.667181,-4.82412 -0.989135,-6.58866 -2.227597,-2.37129 -5.98465,-2.46045 -8.39123,-0.19913 z"
+          />
+        </svg>
+      </button>
+      <button id="modeConnectInverse">
+        <svg
+          width="24.511587"
+          height="25.706366"
+          viewBox="0 0 24.511585 25.706365"
+        >
+          <g transform="rotate(180) translate(-25 -26)">
+            <path class="control-icon"
+              d="m 0,3 6.27583532,6.67898 c -2.6072154,3.738 -2.2622064,8.78661 0.8292948,12.13518 l 2.0658732,-1.94118 c -2.5432443,-2.77213 -2.3850104,-7.07388 0.3550417,-9.65165 2.7429335,-2.57618 7.0476085,-2.46741 9.6569315,0.244 l 2.062117,-1.93765 c -3.138469,-3.27452 -8.126447,-3.93848 -12.0122055,-1.59897 l -6.2899576,-6.69401 z"
+            />
+            <path class="control-icon"
+              d="m 10.5,11 c -2.4065788,2.26131 -2.5511929,6.01664 -0.3229981,8.38737 1.6590191,1.76158 4.2427831,2.31416 6.5145131,1.39325 l 5.00541,5.32694 3.187079,-2.99471 -5.003639,-5.32506 c 1.059511,-2.21082 0.667181,-4.82412 -0.989135,-6.58866 -2.227597,-2.37129 -5.98465,-2.46045 -8.39123,-0.19913 z"
+            />
+          </g>
+        </svg>
+      </button>
+      <button id="modeSignal">
+        <svg
+          width="24.511587"
+          height="25.706366"
+          viewBox="0 0 24.511585 25.706365"
+        >
+          <path class="control-icon"
+            d="m 10,1 c 2e-7,0 0.5748673,2.71258 3.2561633,2.73223 2.681296,0.0197 2.941347,-2.52082 2.941347,-2.52082 0,0 -0.738042,1.25809 -2.888495,1.25926 -2.150453,10e-4 -3.3090153,-1.47067 -3.3090153,-1.47067 z m 7.2545573,0.21831 c 0,0 -1.069938,2.55522 1.123687,4.0972 2.193615,1.54202 3.853625,-0.39754 3.853625,-0.39754 0,0 -1.324043,0.61382 -3.093012,-0.60895 -1.769214,-1.22249 -1.8843,-3.09071 -1.8843,-3.09071 z m -8.6126323,0.25047 c 0,0 0.1449616,1.45354 -1.5924638,2.72075 -1.7372429,1.26752 -3.5388085,0.76061 -3.5388085,0.76061 10e-8,0 2.0609307,1.85247 4.2396764,0.28953 2.1787781,-1.56291 0.8915959,-3.77089 0.8915959,-3.77089 z m -5.708052,4.63721 c 0,0 0.9644709,1.09643 0.2918368,3.13897 -0.6723085,2.04267 -2.43350526,2.68169 -2.43350526,2.68169 0,0 2.75591436,0.30197 3.61463996,-2.23819 0.8587709,-2.54013 -1.4729715,-3.58247 -1.4729715,-3.58247 z m 20.4492573,0.1126 c 1e-6,0 -2.423793,1.34333 -1.659104,3.91336 0.764642,2.57002 3.269951,2.07503 3.269951,2.07503 0,0 -1.420262,-0.3382 -2.049752,-2.39444 -0.629817,-2.05616 0.438905,-3.59395 0.438905,-3.59395 z m -21.98427289,6.8593 c -0.24688045,0.006 -0.40443525,0.0367 -0.40443525,0.0367 0,0 1.42026234,0.33819 2.04975134,2.39444 0.6298229,2.05617 -0.4389042,3.59396 -0.4389042,3.59396 0,0 2.4260924,-1.34333 1.6614016,-3.91336 -0.5734823,-1.92753 -2.1271723,-2.1302 -2.86781349,-2.11181 z m 23.35383789,0.31023 c -0.815178,0.0338 -2.527095,0.33995 -3.17114,2.24507 -0.858773,2.54012 1.472971,3.58247 1.472971,3.58247 0,0 -0.96447,-1.09643 -0.291837,-3.13897 0.672305,-2.04266 2.433506,-2.68169 2.433506,-2.68169 0,0 -0.171775,-0.0181 -0.4435,-0.007 z m -4.931353,6.08031 c -0.499657,0.0461 -1.038585,0.22281 -1.583272,0.61355 -2.178778,1.56291 -0.891595,3.7709 -0.891595,3.7709 0,0 -0.144961,-1.45354 1.592463,-2.72075 1.737238,-1.26752 3.541106,-0.75831 3.541106,-0.75831 2e-6,0 -1.159727,-1.0436 -2.658702,-0.90539 z m -13.5278993,0.0552 c -1.3922328,-0.10447 -2.3255027,0.98582 -2.3255027,0.98582 0,0 1.3240424,-0.61383 3.0930105,0.60895 1.7692193,1.22248 1.8843006,3.09071 1.8843006,3.09071 0,0 1.0699394,-2.55522 -1.1236865,-4.09721 -0.5484038,-0.3855 -1.0640443,-0.55342 -1.5281219,-0.58827 z m 6.7007563,2.38296 c -2.6812954,-0.0196 -2.9413469,2.52082 -2.9413469,2.52082 0,0 0.7380419,-1.26039 2.8884949,-1.26156 2.150453,-10e-4 3.309016,1.47067 3.309016,1.47067 0,0 -0.574868,-2.71029 -3.256164,-2.72993 z"
+          />
+        </svg>
+      </button>
     </div>
   </body>
 </html>
