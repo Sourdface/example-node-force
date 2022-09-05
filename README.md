@@ -19,7 +19,7 @@ A physics simulation sandbox of particles that connect to form larger structures
 
 ## How to Play
 
-When the page is initially opened there are no particles present. The tools in the bottom left corner of the page can be used to create, destroy, connect, and disconnect nodes, and to add energy to the system in the form of "[signal](#signal-and-signal-forces):"
+When the page is initially opened there are no nodes (particles) present. The tools in the bottom left corner of the page can be used to create, destroy, connect, and disconnect nodes, and to add energy to the system:
 
 - **Mouse Pointer**: When selected, clicking a node will set it as the selected node, which is indicated by highlighting the node with a yellow outline.
 - **+/-**: When selected, clicking an empty space will create a new node at that location, connect the selected node to it with an outbound connection, and then set the new node as the selected node. Can be used to quickly create chains of nodes.
