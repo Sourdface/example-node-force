@@ -1,6 +1,6 @@
-MIT License
+# MIT License
 
-Copyright (c) 2017 Brad Harms
+Copyright (c) 2017-2022 Brad K. Harms
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
